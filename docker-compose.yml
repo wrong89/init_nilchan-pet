@@ -1,0 +1,109 @@
+
+services:
+
+  pg:
+    image: postgres
+    restart: always
+    ports:
+      - '5432:5432'
+    shm_size: 128mb
+    volumes:
+      - ./schema:/docker-entrypoint-initdb.d
+    environment:
+      POSTGRES_DB: "todo"
+      POSTGRES_USER: "testUser"
+      POSTGRES_PASSWORD: "123"
+
+  redis:
+    image: redis
+    restart: always
+    ports:
+      - 6379:6379
+
+  kafka:
+    image: apache/kafka-native
+    restart: always
+    ports:
+      - 9092:9092
+    environment:
+      # Configure listeners for both docker and host communication
+      KAFKA_LISTENERS: CONTROLLER://localhost:9091,HOST://0.0.0.0:9092,DOCKER://0.0.0.0:9093
+      KAFKA_ADVERTISED_LISTENERS: HOST://localhost:9092,DOCKER://kafka:9093
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,DOCKER:PLAINTEXT,HOST:PLAINTEXT
+
+      # Settings required for KRaft mode
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@localhost:9091
+
+      # Listener to use for broker-to-broker communication
+      KAFKA_INTER_BROKER_LISTENER_NAME: DOCKER
+
+      # Required for a single node cluster
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+
+  
+  kafka-ui:
+    image: kafbat/kafka-ui:main
+    ports:
+      - 8080:8080
+    environment:
+      DYNAMIC_CONFIG_ENABLED: "true"
+      KAFKA_CLUSTERS_0_NAME: local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9093
+    depends_on:
+      - kafka
+
+  kafka-service:
+    image: wrong21/kafka-service_nilchan-pet
+    restart: always
+    volumes:
+      - ./logs:/logs/
+    environment:
+      LOG_FILE_PATH: /logs/userActions.log
+      KAFKA_BOOTSTRAP_SERVER: kafka:9093
+      KAFKA_GROUP_ID: myGroup
+      KAFKA_AUTO_OFFSET_RESET: earliest
+      KAFKA_TOPICS: apiUserActions
+      KAFKA_TOPICS_PARTITIONS_NUM: 20
+    depends_on:
+      - kafka
+  
+  api-service:
+    image: wrong21/api-service_nilchan-pet
+    restart: always
+    ports:
+      - '6060:6060'
+    environment:
+      STORAGE_SERVICE_ADDRESS: db-service:44044
+      SERVER_PORT: 6060
+      ENV: local
+      KAFKA_BOOTSTRAP_SERVER: kafka:9093
+      LOG_FILE_PATH: /logs/api-service.log
+    volumes:
+      - ./logs:/logs/
+    depends_on:
+      - db-service
+      - kafka
+
+  db-service:
+    image: wrong21/db-service_nilchan-pet
+    restart: always
+    ports:
+      - '44044:44044'
+    depends_on:
+      - pg
+      - redis
+    volumes:
+      - ./logs:/logs/
+    environment:
+      DATABASE_URL: postgres://testUser:123@pg:5432/todo?sslmode=disable
+      LOG_FILE_PATH: /logs/db-service.log
+      GRPC_PORT: 44044
+      ENV: prod
+      REDIS_ADDRESS: redis:6379
+
+volumes:
+  postgres-data:
+
